@@ -10,11 +10,13 @@ Disclaimer - Any of the links in here are affiliate links. I made the affiliate 
 All of these were taken by the camera in an automated fashion, with the camera 12ft away.
 
 ### Downy Woodpecker
-<video controls src="reference/downy.mp4" title="Title"></video>
+https://github.com/user-attachments/assets/f5c6a15e-49df-40e8-a846-62808ed6e938
+
 
 
 ### Ruby Throated Hummingbird
-<video controls src="reference/Hummingbird.mp4" title="Title"></video>
+https://github.com/user-attachments/assets/79e7fb66-84c4-454d-af08-3597fe508675
+
 
 
 ### Northern Cardinal
