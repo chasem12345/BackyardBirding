@@ -1,0 +1,229 @@
+alias: Bird Cam - Follow Frigate Zones
+description: >-
+  Points the Reolink PTZ at whichever bird feeder zone is occupied, using the
+  birdzone Frigate camera as the grounded wide view. REBUILT 2026-08-24 after
+  camera relocation; HARDENED 2026-08-24 (evening) against ping-pong and
+  stuck-between states. PRIORITY (highest first): Pecker > Finch > Hummer > Bath
+  > PlatformTop > Platform. Higher priority preempts; hand-off is automatic when
+  a higher zone clears. PER-ZONE GRACE (closes the old KNOWN GAP): 'desired'
+  treats a zone as occupied if it is on OR has been off for <5s, so a momentary
+  Frigate detection dropout cannot flip the decision - the camera no longer
+  swings between two occupied feeders when one flickers. The off->for:5s trigger
+  debounce matches this window. MOVE LOCKOUT: mode changed queued->single with
+  max_exceeded: silent, and every move branch ends with a 2.5s delay. Triggers
+  during a move are DROPPED, not queued - rapid occupancy flaps can no longer
+  fire back-to-back preset commands that preempt a move mid-flight and strand
+  the camera between presets, out of focus (the arrival-focus automation
+  correctly writes nothing when no position matches, which is why the stuck
+  state stayed blurry). Dropped events are recovered by the next occupancy event
+  or the RECONCILER: a 1-minute time_pattern trigger re-evaluates; if a zone is
+  occupied and the camera is not physically within +/-1 of that preset's
+  pan/tilt/zoom (map mirrored from 'Bird Focus on Arrival'), it re-sends the
+  preset; it also heals an idle camera that is not actually at Bath when the
+  tracker says Bath. The reconciler NEVER initiates idle return (that stays
+  exclusively with the 60s clear trigger, preserving the grace period). IDLE:
+  when every zone has been clear for 60s the camera returns to Bath (Bath IS the
+  idle view); the for: clock resets on any re-occupancy. Raised 30s->60s
+  2026-08-29 because Frigate can keep the bird detection while dropping the zone
+  - the longer wait applies only to the idle return, never to zone-to-zone
+  switching. FOCUS: handled entirely by the separate 'Bird Focus on Arrival (PTZ
+  position)' automation (created 2026-08-24), which verifies pan+tilt+zoom
+  arrival windows and writes focus ~1s after the last axis settles - it covers
+  zone-driven AND manual moves, including the All/Monitor wide view. The older
+  zoom-only 'Bird Focus on Zoom' automation is DISABLED (zoom settles before pan
+  on long slews, so it wrote focus mid-move; and Platform/Finch share zoom 37 so
+  zoom alone cannot tell them apart). HISTORY: a focus-first variant (writing
+  focus before the preset recall) was tried and REVERTED 2026-08-24 -
+  post-arrival focus performed better. CASE-SENSITIVE preset names must match
+  select.bird_ptz_preset options exactly: Pecker, Finch, Hummer, Bath,
+  PlatformTop, Platform (renamed Platformtop -> PlatformTop 2026-08-24;
+  input_select.bird_camera_target updated to match). The camera also has an
+  'All' wide preset, unused here. REQUIRES switch.bird_auto_tracking OFF (camera
+  wanders off presets) and switch.bird_auto_focus OFF (camera hunts over tuned
+  values). NOTE: PlatformTop deliberately outranks Platform; both frame the
+  hopper, so if polygons overlap, PlatformTop wins. RESTART QUIRK: after an HA
+  restart, last_changed re-stamps, so for up to 5s every 'off' zone reads as
+  sticky-occupied and 'desired' may briefly resolve to Pecker; harmless unless a
+  trigger fires in that exact window, and self-corrects on the next event or
+  reconciler pass. NOTE: after adding, deleting or re-saving any preset on the
+  camera, re-capture its pan/tilt/zoom in BOTH automations AND reload the
+  Reolink integration (HA caches the preset slot table).
+triggers:
+  - entity_id:
+      - binary_sensor.pecker_bird_occupancy
+      - binary_sensor.finch_bird_occupancy
+      - binary_sensor.hummer_bird_occupancy
+      - binary_sensor.bath_bird_occupancy
+      - binary_sensor.platformtop_bird_occupancy
+      - binary_sensor.platform_bird_occupancy
+    id: zone
+    to: 'on'
+    trigger: state
+  - entity_id:
+      - binary_sensor.pecker_bird_occupancy
+      - binary_sensor.finch_bird_occupancy
+      - binary_sensor.hummer_bird_occupancy
+      - binary_sensor.bath_bird_occupancy
+      - binary_sensor.platformtop_bird_occupancy
+      - binary_sensor.platform_bird_occupancy
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 5
+    id: zone
+    note: >-
+      Off-transitions are debounced 5s to match the sticky-occupancy window in
+      'desired' - a flicker shorter than 5s generates no trigger at all.
+    to: 'off'
+    trigger: state
+  - for:
+      hours: 0
+      minutes: 0
+      seconds: 60
+    id: clear
+    note: >-
+      Raised 30s->60s 2026-08-29: Frigate sometimes keeps the bird detection but
+      drops the zone occupancy, so the idle timer must outlast those zone
+      dropouts. Applies ONLY to the all-clear->Bath return; zone-to-zone
+      priority handoff uses the zone triggers and stays instant. This for: clock
+      resets whenever any zone re-occupies.
+    trigger: template
+    value_template: >-
+      {{ is_state('binary_sensor.pecker_bird_occupancy','off') and
+      is_state('binary_sensor.finch_bird_occupancy','off') and
+      is_state('binary_sensor.hummer_bird_occupancy','off') and
+      is_state('binary_sensor.bath_bird_occupancy','off') and
+      is_state('binary_sensor.platformtop_bird_occupancy','off') and
+      is_state('binary_sensor.platform_bird_occupancy','off') }}
+  - id: reconcile
+    minutes: /1
+    note: >-
+      Watchdog: recovers from any dropped trigger or physically stuck camera
+      within a minute.
+    trigger: time_pattern
+conditions: []
+actions:
+  - alias: Compute desired zone (sticky occupancy)
+    note: >-
+      desired uses STICKY occupancy: a zone counts as occupied if it is 'on' OR
+      has been 'off' for under 5 seconds. This is the per-zone grace that closes
+      the old KNOWN GAP - a 1s Frigate detection dropout can no longer change
+      the decision, so no ping-pong between two occupied feeders. Priority order
+      unchanged: Pecker > Finch > Hummer > Bath > PlatformTop > Platform.
+      at_desired / at_bath are 'yes'/'no' strings (deliberate - template
+      variables can render booleans as strings, and a 'False' string is truthy;
+      string comparison is unambiguous). Position map mirrors the capture in
+      'Bird Focus on Arrival' - if a preset is re-captured there, update it here
+      too.
+    variables:
+      desired: >-
+        {% set zones =
+        [('Pecker','binary_sensor.pecker_bird_occupancy'),('Finch','binary_sensor.finch_bird_occupancy'),('Hummer','binary_sensor.hummer_bird_occupancy'),('Bath','binary_sensor.bath_bird_occupancy'),('PlatformTop','binary_sensor.platformtop_bird_occupancy'),('Platform','binary_sensor.platform_bird_occupancy')]
+        %}{% set ns = namespace(d='none') %}{% for name, ent in zones %}{% if
+        ns.d == 'none' and (is_state(ent,'on') or (states[ent] is not none and
+        states[ent].state == 'off' and (now() -
+        states[ent].last_changed).total_seconds() < 5)) %}{% set ns.d = name
+        %}{% endif %}{% endfor %}{{ ns.d }}
+  - alias: Compute position checks (needs desired, so must be a separate later step)
+    note: >-
+      Kept in a second variables action because variables within ONE block
+      render in unspecified order - at_desired reads desired, so desired must be
+      fully rendered first. Do not merge these blocks.
+    variables:
+      at_desired: >-
+        {% set pos =
+        {'Pecker':[1557,74,38],'Finch':[15,105,36],'Hummer':[1550,107,41],'Bath':[1583,101,31],'PlatformTop':[1580,61,33],'Platform':[1583,77,37]}
+        %}{% if desired == 'none' %}yes{% else %}{% set p = pos[desired] %}{{
+        'yes' if ((states('sensor.bird_ptz_pan_position')|int(-999) - p[0])|abs
+        <= 1 and (states('sensor.bird_ptz_tilt_position')|int(-999) - p[1])|abs
+        <= 1 and (states('number.bird_zoom')|int(-999) - p[2])|abs <= 1) else
+        'no' }}{% endif %}
+      at_bath: >-
+        {{ 'yes' if ((states('sensor.bird_ptz_pan_position')|int(-999) -
+        1583)|abs <= 1 and (states('sensor.bird_ptz_tilt_position')|int(-999) -
+        101)|abs <= 1 and (states('number.bird_zoom')|int(-999) - 31)|abs <= 1)
+        else 'no' }}
+  - choose:
+      - alias: Go to / correct onto the highest-priority occupied zone
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ desired != 'none' and (desired !=
+              states('input_select.bird_camera_target') or at_desired == 'no')
+              }}
+        sequence:
+          - action: select.select_option
+            data:
+              option: '{{ desired }}'
+            target:
+              entity_id: select.bird_ptz_preset
+          - action: input_select.select_option
+            data:
+              option: '{{ desired }}'
+            target:
+              entity_id: input_select.bird_camera_target
+          - alias: Move lockout
+            delay:
+              hours: 0
+              milliseconds: 500
+              minutes: 0
+              seconds: 2
+            note: >-
+              With mode: single + max_exceeded: silent, triggers during this
+              2.5s are dropped, so nothing can preempt a move in flight (the
+              cause of the half-between stuck state). Anything missed is caught
+              by the next occupancy event or the 1-minute reconciler.
+      - alias: All zones clear for 30s - return to Bath idle
+        conditions:
+          - condition: trigger
+            id: clear
+          - condition: template
+            value_template: >-
+              {{ desired == 'none' and not
+              is_state('input_select.bird_camera_target','Bath') }}
+        sequence:
+          - action: select.select_option
+            data:
+              option: Bath
+            target:
+              entity_id: select.bird_ptz_preset
+          - action: input_select.select_option
+            data:
+              option: Bath
+            target:
+              entity_id: input_select.bird_camera_target
+          - alias: Move lockout
+            delay:
+              hours: 0
+              milliseconds: 500
+              minutes: 0
+              seconds: 2
+      - alias: >-
+          Reconciler: idle position heal (tracker says Bath but camera is not
+          there)
+        conditions:
+          - condition: trigger
+            id: reconcile
+          - condition: template
+            value_template: >-
+              {{ desired == 'none' and
+              is_state('input_select.bird_camera_target','Bath') and at_bath ==
+              'no' }}
+        note: >-
+          Heals a camera stuck between presets while idle. Only fires when the
+          tracker ALREADY says Bath (the idle decision was made by the 30s clear
+          branch), so it never shortcuts the 30s grace.
+        sequence:
+          - action: select.select_option
+            data:
+              option: Bath
+            target:
+              entity_id: select.bird_ptz_preset
+          - alias: Move lockout
+            delay:
+              hours: 0
+              milliseconds: 500
+              minutes: 0
+              seconds: 2
+max_exceeded: silent
+mode: single

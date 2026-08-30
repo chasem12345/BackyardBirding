@@ -1,0 +1,143 @@
+mqtt:
+  host: 10.10.69.6
+  user: mqtt
+  password: "{FRIGATE_MQTT_PASSWORD}"
+  topic_prefix: frigate
+
+go2rtc:
+  streams:
+    bird:
+      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@10.10.68.24/h265Preview_01_main#backchannel=0
+    bird_sub:
+      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@10.10.68.24/h265Preview_01_sub#backchannel=0
+    birdzone:
+      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@10.10.68.23/h265Preview_01_main#backchannel=0
+    birdzone_sub:
+      - rtsp://admin:{FRIGATE_RTSP_PASSWORD}@10.10.68.23/h265Preview_01_sub#backchannel=0
+
+ffmpeg:
+  input_args: preset-rtsp-restream
+  output_args:
+    record: preset-record-generic-audio-copy
+  hwaccel_args: preset-nvidia
+  
+cameras:
+bird:
+    record:
+      enabled: true
+      continuous:
+        days: 5
+    ffmpeg:
+      output_args:
+        record: preset-record-generic-audio-aac
+      inputs:
+        - path: rtsp://127.0.0.1:8554/bird
+          input_args: preset-rtsp-restream
+          roles:
+            - record
+    live:
+      streams:
+        bird_sub: bird_sub
+        bird: bird
+    onvif:
+      host: 10.10.68.24
+      port: 8000
+      user: admin
+      password: '{FRIGATE_RTSP_PASSWORD}'
+
+  birdzone:
+    record:
+      enabled: true
+      continuous:
+        days: 5
+    objects:
+      track:
+        - bird
+      filters:
+        bird:
+          min_score: 0.65
+          threshold: 0.75
+    ffmpeg:
+      output_args:
+        record: preset-record-generic-audio-aac
+      inputs:
+        - path: rtsp://127.0.0.1:8554/birdzone
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 3840
+      height: 2160
+      fps: 10
+      max_disappeared: 200
+      stationary:
+        interval: 10
+        threshold: 120
+      min_initialized: 2
+    live:
+      streams:
+        birdzone_sub: birdzone_sub
+        birdzone: birdzone
+    onvif:
+      host: 10.10.68.23
+      port: 8000
+      user: admin
+      password: '{FRIGATE_RTSP_PASSWORD}'
+    zones:
+      finch:
+        coordinates: 0.074,0.642,0.231,0.648,0.235,1,0.083,1
+        inertia: 1
+        loitering_time: 0
+        friendly_name: Finch
+        objects: bird
+        enabled: true
+      bath:
+        coordinates: 
+          0.262,0.935,0.379,0.419,0.644,0.424,0.658,0.712,0.663,0.811,0.716,0.95
+        inertia: 1
+        loitering_time: 0
+        friendly_name: Bath
+        enabled: true
+        objects: bird
+      hummer:
+        coordinates: 0.755,0.637,0.753,1,0.965,1,0.961,0.632
+        inertia: 1
+        loitering_time: 0
+        friendly_name: Hummer
+        enabled: true
+        objects: bird
+      platform:
+        coordinates: 0.355,0.169,0.357,0.413,0.664,0.422,0.666,0.168
+        inertia: 1
+        loitering_time: 0
+        friendly_name: Platform
+        objects: bird
+        enabled: true
+      platformtop:
+        coordinates: 0.304,0.157,0.35,0,0.711,0,0.751,0.159
+        inertia: 1
+        loitering_time: 0
+        friendly_name: PlatformTop
+        enabled: true
+        objects: bird
+      pecker:
+        coordinates: 
+          0.669,0.329,0.768,0.396,0.878,0.333,0.868,0.053,0.736,0.086,0.75,0.152,0.699,0.156
+        enabled: true
+        inertia: 1
+        loitering_time: 0
+        objects: bird
+        friendly_name: Pecker
+    motion:
+      threshold: 30
+      contour_area: 10
+      improve_contrast: true
+      
+detectors:
+  hailo:
+    type: hailo8l
+    device: PCIe
+
+model:
+  path: plus://modelidhere

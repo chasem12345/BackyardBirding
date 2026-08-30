@@ -1,0 +1,291 @@
+alias: Bird Focus on Arrival (PTZ position)
+description: >-
+  Sets per-zone camera focus when the PTZ ARRIVES at a known preset position,
+  verified on all three axes (pan + tilt + zoom). Replaces the zoom-only 'Bird
+  Focus on Zoom' automation (disabled 2026-08-24), which misfired because zoom
+  settles before pan on long slews, so the focus write landed mid-move and
+  halted the PTZ short of the preset - and because zoom alone cannot distinguish
+  Platform from Finch (both zoom 37; the zoom map's Platform=39 was stale, so
+  Platform arrivals were matching the Finch branch and masking that its mapped
+  value 602 was wrong). ARCHITECTURE (inherited from the retired
+  bird_zoom_focus_by_ptz_position, which proved it on this hardware):
+  numeric_state triggers on each preset's position windows, mode: restart so any
+  axis crossing a window cancels the in-flight run and restarts the settle clock
+  (evaluation therefore happens 1s after the LAST axis movement, and can never
+  fire mid-move), then choose branches require ALL THREE axes to match before
+  writing focus. If no branch matches after the settle, nothing is written.
+  SETTLE = 1s (old automation used 3s; measured preset arrival is ~800ms per its
+  2026-08-11 notes, and restart-mode means the clock starts from the final
+  axis's window entry, so 1s is enough margin - raise only with evidence).
+  POSITIONS captured live on 2026-08-24 by touring all presets (each verified
+  stable across repeated reads): Pecker 1557/74/38 -> 713. Finch 15/105/36 ->
+  854. Hummer 1550/107/41 -> 287. Bath 1583/101/31 -> 992. Platform 1583/77/37
+  -> 792 (re-measured 2026-08-24 via temporary auto-focus at the preset; AF
+  independently settled on 785, the same value the old zoom-map bug had been
+  accidentally applying, which is why Platform historically looked sharp - the
+  never-validated 602 was confirmed blurry when first correctly applied).
+  PlatformTop 1580/61/33 -> 960. All (Monitor wide) 1583/87/16 -> 866. All
+  windows are +/-1 around the captured value. TIGHT SPOTS: PlatformTop pan
+  (1579-1581) is edge-adjacent to the Bath/Platform/All cluster (1582-1584) with
+  zero gap but no overlap - do not widen any pan window. Finch+Hummer share tilt
+  107 (separated by pan 15 vs 1550). Pecker/Finch/Platform zoom windows overlap
+  around 37-38 (separated by pan). Bath/Platform/All share pan 1583 exactly
+  (separated by tilt 101/77/87). NOTE: Platform and Finch legitimately share
+  focus 785 (similar focal distance, both zoom 37). NOTE: if any preset is
+  re-saved on the camera, re-capture that row's pan/tilt/zoom AND reload the
+  Reolink integration (HA caches the preset slot table). RE-TUNED 2026-08-30:
+  all focus values re-captured live at each preset (Monitor/All wide still 866,
+  pending re-tune). Finch preset re-saved on camera: now 15/105/36 (was
+  15/107/37) - Finch branch tilt window now 104-106, zoom window 35-37, and a
+  tilt trigger 104-106 added (new tilt 105 fell outside every existing tilt
+  trigger window, so arrival could have gone undetected when tilt settled last).
+  Platform and Finch no longer share zoom or focus. PECKER RE-CAPTURED
+  2026-08-30: preset re-saved on camera, now 1557/74/38 (was 1567/97/38); pan
+  trigger/window moved to 1556-1558 and tilt trigger/window to 73-75 (adjacent
+  to Platform tilt 76-78, no overlap; pan 1556-1558 sits between Hummer
+  1549-1551 and the 1579+ cluster with clear gaps).
+triggers:
+  - above: 1555
+    below: 1559
+    entity_id:
+      - sensor.bird_ptz_pan_position
+    trigger: numeric_state
+  - above: 13
+    below: 17
+    entity_id:
+      - sensor.bird_ptz_pan_position
+    trigger: numeric_state
+  - above: 1548
+    below: 1552
+    entity_id:
+      - sensor.bird_ptz_pan_position
+    trigger: numeric_state
+  - above: 1581
+    below: 1585
+    entity_id:
+      - sensor.bird_ptz_pan_position
+    trigger: numeric_state
+  - above: 1578
+    below: 1582
+    entity_id:
+      - sensor.bird_ptz_pan_position
+    trigger: numeric_state
+  - above: 72
+    below: 76
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 105
+    below: 109
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 99
+    below: 103
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 75
+    below: 79
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 59
+    below: 63
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 85
+    below: 89
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+  - above: 36
+    below: 40
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 35
+    below: 39
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 39
+    below: 43
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 29
+    below: 33
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 31
+    below: 35
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 14
+    below: 18
+    entity_id:
+      - number.bird_zoom
+    trigger: numeric_state
+  - above: 103
+    below: 107
+    entity_id:
+      - sensor.bird_ptz_tilt_position
+    trigger: numeric_state
+actions:
+  - alias: Settle 1s from the last axis movement (restart mode resets this)
+    delay:
+      hours: 0
+      milliseconds: 0
+      minutes: 0
+      seconds: 1
+    note: >-
+      With mode: restart, any subsequent window crossing cancels this run and
+      restarts the clock, so this measures 1s from the FINAL axis arriving. Old
+      automation used 3s with measured arrival ~800ms - 1s is deliberate; raise
+      only with evidence of misses.
+  - choose:
+      - alias: Pecker - 1557/74/38
+        conditions:
+          - above: 1555
+            below: 1559
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 72
+            below: 76
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 36
+            below: 40
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 713
+            target:
+              entity_id: number.bird_focus
+      - alias: Finch - 15/105/36
+        conditions:
+          - above: 13
+            below: 17
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 103
+            below: 107
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 34
+            below: 38
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 854
+            target:
+              entity_id: number.bird_focus
+      - alias: Hummer - 1550/107/41
+        conditions:
+          - above: 1548
+            below: 1552
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 105
+            below: 109
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 39
+            below: 43
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 287
+            target:
+              entity_id: number.bird_focus
+      - alias: Bath - 1583/101/31
+        conditions:
+          - above: 1581
+            below: 1585
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 99
+            below: 103
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 29
+            below: 33
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 992
+            target:
+              entity_id: number.bird_focus
+      - alias: Platform - 1583/77/37
+        conditions:
+          - above: 1581
+            below: 1585
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 75
+            below: 79
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 35
+            below: 39
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 792
+            target:
+              entity_id: number.bird_focus
+      - alias: PlatformTop - 1580/61/33
+        conditions:
+          - above: 1578
+            below: 1582
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 59
+            below: 63
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 31
+            below: 35
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 960
+            target:
+              entity_id: number.bird_focus
+      - alias: All (Monitor wide) - 1583/87/16
+        conditions:
+          - above: 1581
+            below: 1585
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_pan_position
+          - above: 85
+            below: 89
+            condition: numeric_state
+            entity_id: sensor.bird_ptz_tilt_position
+          - above: 14
+            below: 18
+            condition: numeric_state
+            entity_id: number.bird_zoom
+        sequence:
+          - action: number.set_value
+            data:
+              value: 866
+            target:
+              entity_id: number.bird_focus
+mode: restart
